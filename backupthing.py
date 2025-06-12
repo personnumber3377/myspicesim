@@ -304,16 +304,12 @@ def parse_file():
 	if len(sys.argv) != 2: # File input?
 		print("Usage: "+str(sys.argv[0])+" INPUT_NET_FILE")
 		exit(0)
-
 	resistor_nodes = []
 	resistor_values = []
 	inductor_values = []
 	nodes_inductors = []
 	nodes_capacitors = []
 	capacitor_values = []
-
-	diode_nodes = []  # [[n+, n-], ...]
-	Is_values = []    # [1e-12, ...]
 
 	fh = open(sys.argv[-1], "r")
 	lines = fh.readlines()
@@ -377,19 +373,10 @@ def parse_file():
 			nodes_capacitors.append(index_thing)
 			capacitor_values.append(value)
 
-		if "D" == line[0]:
-			tokens = line.split(" ")
-			tokens = [thing for thing in tokens if thing != ""]
-
-			index_thing = [int(x) for x in tokens[1:3]]
-			value = float(tokens[-1])
-
-			diode_nodes.append(index_thing)
-			Is_values.append(value)
 
 
 
-	return resistor_nodes, resistor_values, voltage_nodes, voltage_values, nodes_inductors, inductor_values, nodes_capacitors, capacitor_values, diode_nodes, Is_values
+	return resistor_nodes, resistor_values, voltage_nodes, voltage_values, nodes_inductors, inductor_values, nodes_capacitors, capacitor_values
 
 
 def generate_rhs(stuff, voltages):
@@ -410,46 +397,6 @@ def get_initial_stuff(resistor_values, resistor_nodes, voltage_nodes, voltage_va
 		poopooshit2.append(cap_node)
 
 	return resistor_values, resistor_nodes, poopooshit2, poopooshit, nodes_inductors, inductor_values, [], []
-
-
-# Newton rhapson for non-linear components...
-
-def newton_raphson_solve(G, rhs, diode_nodes, Is_values, V_guess, max_iters=100):
-	VT = 0.025
-	V = V_guess.copy()
-	for _ in range(max_iters):
-		Gnl = G.copy()
-		rhs_nl = rhs.copy()
-		for i, diode in enumerate(diode_nodes):
-			n_plus, n_minus = diode
-			V_diode = (V[n_plus - 1] if n_plus != 0 else 0) - (V[n_minus - 1] if n_minus != 0 else 0)
-			Is = Is_values[i]
-			I_diode = Is * (np.exp(V_diode / VT) - 1)
-			G_diode = Is / VT * np.exp(V_diode / VT)
-			I_offset = I_diode - G_diode * V_diode
-
-			# Stamp G_diode
-			if n_plus != 0:
-				Gnl[n_plus-1][n_plus-1] += G_diode
-			if n_minus != 0:
-				Gnl[n_minus-1][n_minus-1] += G_diode
-			if n_plus != 0 and n_minus != 0:
-				Gnl[n_plus-1][n_minus-1] -= G_diode
-				Gnl[n_minus-1][n_plus-1] -= G_diode
-
-			# Stamp I_offset
-			if n_plus != 0:
-				rhs_nl[n_plus-1] -= I_offset
-			if n_minus != 0:
-				rhs_nl[n_minus-1] += I_offset
-
-		deltaV = np.linalg.solve(Gnl, rhs_nl)
-		V += deltaV
-		if np.max(np.abs(deltaV)) < 1e-6:
-			break
-	return V
-
-
 
 if __name__=="__main__":
 
@@ -476,7 +423,7 @@ if __name__=="__main__":
 				print("Please input two integer numbers separated by a space.")
 	else:
 		# return resistor_nodes, resistor_values, voltage_nodes, voltage_values, nodes_inductors, inductor_values
-		resistor_nodes, resistor_values, voltage_nodes, voltage_values, nodes_inductors, inductor_values, nodes_capacitors, capacitor_values, diode_nodes, Is_values = parse_file()
+		resistor_nodes, resistor_values, voltage_nodes, voltage_values, nodes_inductors, inductor_values, nodes_capacitors, capacitor_values = parse_file()
 
 
 	poopoofirst = [resistor_values, resistor_nodes, voltage_nodes, voltage_values, nodes_inductors, inductor_values, nodes_capacitors, capacitor_values]
@@ -499,9 +446,6 @@ if __name__=="__main__":
 
 
 	C, _ = get_capacitance_and_inductance_matrix(nodes_inductors, inductor_values, nodes_capacitors, capacitor_values, max_node_num, [len(G[0]), len(G)])
-
-
-	
 	print(resistor_nodes)
 	#stuff = len(Ginitial[0])
 
@@ -547,11 +491,9 @@ if __name__=="__main__":
 	for _ in range(count-1):
 		# rhs = (net.C - 0.5 * h * net.G) * net.x[:, k - 1] + 0.5 * h * (rhs_fun(net.t[k - 1]) + rhs_fun(net.t[k]))
 		#rhs = (C - 0.5 * h * G) * solution + 0.5 * h * (original_rhs * 2)
-		# poopoo = np.dot((C - 0.5 * h * G),solution)
 		rhs = np.dot((C - 0.5 * h * G),solution) + 0.5 * h * (original_rhs * 2)
 		#net.x[:, k] = spsolve(K, rhs)
-		# solution = np.linalg.solve(K, rhs)
-		solution = newton_raphson_solve(G, rhs, diode_nodes, Is_values, V_guess)
+		solution = np.linalg.solve(K, rhs)
 		solutions.append(solution)
 		x_vals.append(cur_x)
 		cur_x += h
