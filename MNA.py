@@ -68,32 +68,28 @@ def get_capacitance_and_inductance_matrix(nodes_inductors, inductor_values, node
 		N1 = cap_val[0]
 		N2 = cap_val[1]
 
-		print("N1: "+str(N1))
-		print("N2: "+str(N2))
-		print("values[ir]: "+str(capacitor_values[index]))
-		if N1 == 0 or N2 == 0:
+		#print("N1: "+str(N1))
+		#print("N2: "+str(N2))
+		C = capacitor_values[index]
 
-			g.append(1*capacitor_values[index])
-			g_row.append(max(N1, N2) - 1)
-			g_col.append(max(N1, N2) - 1)
-		
-		else:
-			# This adds the admittance to the start point.
-			g.append(1*capacitor_values[index])
-			g_row.append(N1 - 1)
-			g_col.append(N1 - 1)
-			# This adds the admittance to the start point.
-			g.append(1*capacitor_values[index])
-			g_row.append(N2 - 1)
-			g_col.append(N2 - 1)
+		if N1 != 0:
+		    g.append(C)
+		    g_row.append(N1 - 1)
+		    g_col.append(N1 - 1)
 
-			g.append(-1*capacitor_values[index])
-			g_row.append(N1 - 1)
-			g_col.append(N2 - 1)
+		if N2 != 0:
+		    g.append(C)
+		    g_row.append(N2 - 1)
+		    g_col.append(N2 - 1)
 
-			g.append(-1*capacitor_values[index])
-			g_row.append(N2 - 1)
-			g_col.append(N1 - 1)
+		if N1 != 0 and N2 != 0:
+		    g.append(-C)
+		    g_row.append(N1 - 1)
+		    g_col.append(N2 - 1)
+
+		    g.append(-C)
+		    g_row.append(N2 - 1)
+		    g_col.append(N1 - 1)
 
 	#resulting_matrix = generate_matrix()
 	index_stuff = [[g_row[i],g_col[i]] for i in range(len(g_col))]
@@ -414,46 +410,42 @@ def get_initial_stuff(resistor_values, resistor_nodes, voltage_nodes, voltage_va
 
 # Newton rhapson for non-linear components...
 
-def newton_raphson_solve(G, rhs, diode_nodes, Is_values, V_guess, max_iters=50):
+def newton_raphson_solve(K, rhs, diode_nodes, Is_values, V_guess, max_iters=50):
     VT = 0.025
-
-    V = np.asarray(V_guess).reshape(-1, 1)  # FORCE (N,1)
+    V = V_guess.copy()
 
     for _ in range(max_iters):
-        Gnl = G.copy()
-        rhs_nl = rhs.copy()
+        F = K @ V - rhs
+        J = K.copy()
 
-        for i, diode in enumerate(diode_nodes):
-            n_plus, n_minus = diode
-
-            Vp = V[n_plus - 1, 0] if n_plus != 0 else 0.0
-            Vm = V[n_minus - 1, 0] if n_minus != 0 else 0.0
+        for i, (n_plus, n_minus) in enumerate(diode_nodes):
+            Vp = V[n_plus-1,0] if n_plus else 0.0
+            Vm = V[n_minus-1,0] if n_minus else 0.0
             Vd = Vp - Vm
 
             Is = Is_values[i]
             expV = np.exp(Vd / VT)
 
-            I = Is * (expV - 1.0)
             Gd = Is / VT * expV
-            Ieq = I - Gd * Vd
+            Id = Is * (expV - 1.0)
 
-            if n_plus != 0:
-                Gnl[n_plus-1, n_plus-1] += Gd
-                rhs_nl[n_plus-1, 0] -= Ieq
-            if n_minus != 0:
-                Gnl[n_minus-1, n_minus-1] += Gd
-                rhs_nl[n_minus-1, 0] += Ieq
-            if n_plus != 0 and n_minus != 0:
-                Gnl[n_plus-1, n_minus-1] -= Gd
-                Gnl[n_minus-1, n_plus-1] -= Gd
+            if n_plus:
+                F[n_plus-1,0] -= Id
+                J[n_plus-1,n_plus-1] += Gd
+            if n_minus:
+                F[n_minus-1,0] += Id
+                J[n_minus-1,n_minus-1] += Gd
+            if n_plus and n_minus:
+                J[n_plus-1,n_minus-1] -= Gd
+                J[n_minus-1,n_plus-1] -= Gd
 
-        deltaV = np.linalg.solve(Gnl, rhs_nl)
-        V += deltaV
+        delta = np.linalg.solve(J, -F)
+        V += delta
 
-        if np.max(np.abs(deltaV)) < 1e-9:
+        if np.max(np.abs(delta)) < 1e-9:
             break
 
-    return V  # ALWAYS (N,1)
+    return V
 
 
 
@@ -495,37 +487,44 @@ if __name__=="__main__":
 	if poopoofirst != [resistor_values, resistor_nodes, voltage_nodes, voltage_values, nodes_inductors, inductor_values, nodes_capacitors, capacitor_values]:
 		print("Fail")
 		exit(1)
-	G, max_node_num = get_conductance_matrix(resistor_values, resistor_nodes, voltage_nodes, voltage_values, nodes_inductors)
-
-	Ginitial, max_node_num2 = get_conductance_matrix(resistor_values2, resistor_nodes2, voltage_nodes2, voltage_values2, nodes_inductors2)
-
-	print("G == "+str(G))
 	
-	print("[len(G[0]), len(G)] == "+str([len(G[0]), len(G)]))
 
 
-	C, _ = get_capacitance_and_inductance_matrix(nodes_inductors, inductor_values, nodes_capacitors, capacitor_values, max_node_num, [len(G[0]), len(G)])
+	# Build the transient system (includes capacitors in C)
+	G, max_node_num = get_conductance_matrix(resistor_values, resistor_nodes,
+	                                         voltage_nodes, voltage_values,
+	                                         nodes_inductors)
+	C, _ = get_capacitance_and_inductance_matrix(nodes_inductors, inductor_values,
+	                                             nodes_capacitors, capacitor_values,
+	                                             max_node_num, [len(G[0]), len(G)])
+
+	G = np.asarray(G, dtype=float)
+	C = np.asarray(C, dtype=float)
+
+	# DC operating point: capacitors open => just DON'T include them anywhere
+	Gdc, _ = get_conductance_matrix(resistor_values, resistor_nodes,
+	                                voltage_nodes, voltage_values,
+	                                nodes_inductors)
+	Gdc = np.asarray(Gdc, dtype=float)
+
+	rhsdc = np.asarray(generate_rhs(len(Gdc[0]), voltage_values), dtype=float).reshape(-1, 1)
+
+	# Initial guess / operating point
+	x0 = np.linalg.solve(Gdc, rhsdc)   # or lstsq if singular
+	solution = x0.reshape(-1, 1)
+
+	# Now build transient rhs (same size as G/C)
+	rhs = np.asarray(generate_rhs(G.shape[0], voltage_values), dtype=float).reshape(-1, 1)
+	original_rhs = rhs.copy()
+
+	assert solution.shape[0] == G.shape[0] == C.shape[0] == original_rhs.shape[0]
 
 
-	
-	print(resistor_nodes)
-	#stuff = len(Ginitial[0])
-
-	stuff = len(G[0])
-	#rhs = generate_rhs(stuff, voltage_values2)
-
-	rhs = generate_rhs(stuff, voltage_values)
 
 
-	stuff2 = len(Ginitial[0])
-	rhs2 = generate_rhs(stuff2, voltage_values2)
 
-	x = np.linalg.lstsq(np.array(Ginitial), np.array(rhs2))
-	x = x[0]
 
-	# solution = np.concatenate((x[:max_node_num2],np.array(inductor_values),x[max_node_num2:(max_node_num2+len(voltage_nodes))]))
-	
-	solution = x.reshape((-1, 1))
+
 
 
 	G = np.array(G)
@@ -553,7 +552,10 @@ if __name__=="__main__":
 
 	# original_rhs = copy.deepcopy(np.array([rhs]).T)
 
-	original_rhs = np.asarray(rhs).reshape(-1, 1)
+
+
+
+	# original_rhs = np.asarray(rhs).reshape(-1, 1)
 
 
 	print("original_rhs == "+str(original_rhs))
@@ -568,7 +570,9 @@ if __name__=="__main__":
 		rhs = np.dot((C - 0.5 * h * G),solution) + 0.5 * h * (original_rhs * 2)
 		#net.x[:, k] = spsolve(K, rhs)
 		# solution = np.linalg.solve(K, rhs)
-		solution = newton_raphson_solve(G, rhs, diode_nodes, Is_values, V_guess)
+		# solution = newton_raphson_solve(G, rhs, diode_nodes, Is_values, V_guess)
+		solution = newton_raphson_solve(G, rhs, diode_nodes, Is_values, solution)
+
 		solutions.append(solution)
 		x_vals.append(cur_x)
 		cur_x += h
