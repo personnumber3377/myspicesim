@@ -414,40 +414,46 @@ def get_initial_stuff(resistor_values, resistor_nodes, voltage_nodes, voltage_va
 
 # Newton rhapson for non-linear components...
 
-def newton_raphson_solve(G, rhs, diode_nodes, Is_values, V_guess, max_iters=100):
-	VT = 0.025
-	V = V_guess.copy()
-	for _ in range(max_iters):
-		Gnl = G.copy()
-		rhs_nl = rhs.copy()
-		for i, diode in enumerate(diode_nodes):
-			n_plus, n_minus = diode
-			V_diode = (V[n_plus - 1] if n_plus != 0 else 0) - (V[n_minus - 1] if n_minus != 0 else 0)
-			Is = Is_values[i]
-			I_diode = Is * (np.exp(V_diode / VT) - 1)
-			G_diode = Is / VT * np.exp(V_diode / VT)
-			I_offset = I_diode - G_diode * V_diode
+def newton_raphson_solve(G, rhs, diode_nodes, Is_values, V_guess, max_iters=50):
+    VT = 0.025
 
-			# Stamp G_diode
-			if n_plus != 0:
-				Gnl[n_plus-1][n_plus-1] += G_diode
-			if n_minus != 0:
-				Gnl[n_minus-1][n_minus-1] += G_diode
-			if n_plus != 0 and n_minus != 0:
-				Gnl[n_plus-1][n_minus-1] -= G_diode
-				Gnl[n_minus-1][n_plus-1] -= G_diode
+    V = np.asarray(V_guess).reshape(-1, 1)  # FORCE (N,1)
 
-			# Stamp I_offset
-			if n_plus != 0:
-				rhs_nl[n_plus-1] -= I_offset
-			if n_minus != 0:
-				rhs_nl[n_minus-1] += I_offset
+    for _ in range(max_iters):
+        Gnl = G.copy()
+        rhs_nl = rhs.copy()
 
-		deltaV = np.linalg.solve(Gnl, rhs_nl)
-		V += deltaV
-		if np.max(np.abs(deltaV)) < 1e-6:
-			break
-	return V
+        for i, diode in enumerate(diode_nodes):
+            n_plus, n_minus = diode
+
+            Vp = V[n_plus - 1, 0] if n_plus != 0 else 0.0
+            Vm = V[n_minus - 1, 0] if n_minus != 0 else 0.0
+            Vd = Vp - Vm
+
+            Is = Is_values[i]
+            expV = np.exp(Vd / VT)
+
+            I = Is * (expV - 1.0)
+            Gd = Is / VT * expV
+            Ieq = I - Gd * Vd
+
+            if n_plus != 0:
+                Gnl[n_plus-1, n_plus-1] += Gd
+                rhs_nl[n_plus-1, 0] -= Ieq
+            if n_minus != 0:
+                Gnl[n_minus-1, n_minus-1] += Gd
+                rhs_nl[n_minus-1, 0] += Ieq
+            if n_plus != 0 and n_minus != 0:
+                Gnl[n_plus-1, n_minus-1] -= Gd
+                Gnl[n_minus-1, n_plus-1] -= Gd
+
+        deltaV = np.linalg.solve(Gnl, rhs_nl)
+        V += deltaV
+
+        if np.max(np.abs(deltaV)) < 1e-9:
+            break
+
+    return V  # ALWAYS (N,1)
 
 
 
@@ -517,8 +523,11 @@ if __name__=="__main__":
 	x = np.linalg.lstsq(np.array(Ginitial), np.array(rhs2))
 	x = x[0]
 
-	solution = np.concatenate((x[:max_node_num2],np.array(inductor_values),x[max_node_num2:(max_node_num2+len(voltage_nodes))]))
+	# solution = np.concatenate((x[:max_node_num2],np.array(inductor_values),x[max_node_num2:(max_node_num2+len(voltage_nodes))]))
 	
+	solution = x.reshape((-1, 1))
+
+
 	G = np.array(G)
 	C = np.array(C)
 	rhs = np.array(rhs)
@@ -531,14 +540,22 @@ if __name__=="__main__":
 	print()
 	K = C + 0.5*h*G
 
-	solution = np.array([solution])
-	solution = solution.T
+	# solution = np.array([solution])
+	# solution = solution.T
+
+
+
 	print("K == "+str(K))
 	print("solutionpoopoo == "+str(solution))
 	print("Initial condition is this: "+str(solution))
 
 	solutions = [solution]
-	original_rhs = copy.deepcopy(np.array([rhs]).T)
+
+	# original_rhs = copy.deepcopy(np.array([rhs]).T)
+
+	original_rhs = np.asarray(rhs).reshape(-1, 1)
+
+
 	print("original_rhs == "+str(original_rhs))
 	
 	x_vals = [0]
