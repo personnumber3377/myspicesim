@@ -534,7 +534,9 @@ if __name__=="__main__":
 
 	print("Result: "+str(G))
 	print("Solution: "+str(solution))
-	h = 0.01
+
+	h = 0.1
+
 	count = 1000
 	print()
 	K = C + 0.5*h*G
@@ -571,7 +573,7 @@ if __name__=="__main__":
 		#net.x[:, k] = spsolve(K, rhs)
 		# solution = np.linalg.solve(K, rhs)
 		# solution = newton_raphson_solve(G, rhs, diode_nodes, Is_values, V_guess)
-		solution = newton_raphson_solve(G, rhs, diode_nodes, Is_values, solution)
+		solution = newton_raphson_solve(K, rhs, diode_nodes, Is_values, solution) # Originally this had the G in it...
 
 		solutions.append(solution)
 		x_vals.append(cur_x)
@@ -590,7 +592,9 @@ if __name__=="__main__":
 	
 	print("solutions[0] == "+str(solutions[0]))
 
-	y_vals = [sol[2][0] for sol in solutions]
+	# y_vals = [sol[2][0] for sol in solutions]
+
+	y_vals = [sol[1][0] for sol in solutions]
 
 	plt.plot(x_vals, y_vals)
 	plt.show()
